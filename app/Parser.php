@@ -6,7 +6,7 @@ use Exception;
 
 final class Parser
 {
-    private const WORKERS = 4;
+    private const WORKERS = 8;
 
     public function parse(string $inputPath, string $outputPath): void
     {
@@ -42,7 +42,7 @@ final class Parser
             if ($pid === 0) {
                 // Child process
                 $visits = $this->processChunk($inputPath, $start, $end);
-                file_put_contents($tempFile, json_encode($visits));
+                file_put_contents($tempFile, serialize($visits));
                 exit(0);
             }
 
@@ -57,7 +57,10 @@ final class Parser
 
         foreach ($tempFiles as $tempFile) {
             $handle = fopen($tempFile, 'r');
-            $visits = json_decode(file_get_contents($tempFile), true);
+            $visits = unserialize(
+                file_get_contents($tempFile),
+                ['allowed_classes' => false]
+            );
 
             fclose($handle);
 
@@ -75,7 +78,7 @@ final class Parser
         }
         unset($days);
 
-        $json = json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        $json = json_encode($merged, JSON_PRETTY_PRINT);
         $json = str_replace("\n", "\r\n", $json);
         file_put_contents($outputPath, $json);
     }
@@ -96,10 +99,11 @@ final class Parser
         $bytesRead = 0;
         $limit = $end - $start;
 
-        while ($bytesRead < $limit && ($line = fgets($handle)) !== false) {
-            
-            // https://stitcher.io/blog/php-81-new-in-initializers,2023-11-03T13:21:54+00:00
-            $bytesRead += strlen($line);
+        while (($line = fgets($handle)) !== false) {
+            if (ftell($handle) > $end) {
+                break;
+            }
+
 
             $commaPos = strpos($line, ',');
 
@@ -107,8 +111,8 @@ final class Parser
                 continue;
             }
 
-            $date = substr($line, $commaPos + 1, 10);
             $path = substr($line, 19, $commaPos - 19);
+            $date = substr($line, $commaPos + 1, 10);
 
             if ($path === false || $path === null) {
                 continue;

@@ -6,7 +6,7 @@ use Exception;
 
 final class Parser
 {
-    private const WORKERS = 8;
+    private const WORKERS = 2;
     private const SHM_SIZE = 128 * 1024 * 1024; // 128 MB per worker
 
     public function parse(string $inputPath, string $outputPath): void
@@ -121,32 +121,19 @@ final class Parser
         fseek($handle, $start);
 
         $visits = [];
-        $buffer = '';
         $pos = $start;
 
-        while (true) {
-            $chunk = fread($handle, 65536);
-            if ($chunk === false || $chunk === '') break;
+        while (($line = fgets($handle)) !== false) {
+            $pos += strlen($line);
+            if ($pos > $end) break;
 
-            $buffer .= $chunk;
-            $newlinePos = strrpos($buffer, "\n");
-            if ($newlinePos === false) continue;
+            $commaPos = strpos($line, ',');
+            if ($commaPos === false) continue;
 
-            $block = substr($buffer, 0, $newlinePos + 1);
-            $buffer = substr($buffer, $newlinePos + 1);
+            $path = substr($line, 19, $commaPos - 19);
+            $date = substr($line, $commaPos + 1, 10);
 
-            $pos += strlen($block);
-            $stop = $pos > $end;
-
-            foreach (explode("\n", $block) as $line) {
-                $commaPos = strpos($line, ',');
-                if ($commaPos === false) continue;
-                $path = substr($line, 19, $commaPos - 19);
-                $date = substr($line, $commaPos + 1, 10);
-                $visits[$path][$date] = ($visits[$path][$date] ?? 0) + 1;
-            }
-
-            if ($stop) break;
+            $visits[$path][$date] = ($visits[$path][$date] ?? 0) + 1;
         }
 
         fclose($handle);

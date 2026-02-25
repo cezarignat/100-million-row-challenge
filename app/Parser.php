@@ -13,6 +13,15 @@ final class Parser
         $fileSize = filesize($inputPath);
         $chunkSize = (int) ceil($fileSize / self::WORKERS);
 
+        $offsets = [0];
+        $handle = fopen($inputPath, 'r');
+        for ($i = 1; $i < self::WORKERS; $i++) {
+            fseek($handle, $i * $chunkSize);
+            fgets($handle); // advance past the partial line
+            $offsets[$i] = ftell($handle);
+        }
+        fclose($handle);
+
         $tempFiles = [];
         $pids = [];
 
@@ -20,7 +29,8 @@ final class Parser
             $tempFile = tempnam(sys_get_temp_dir(), 'parser_');
             $tempFiles[$i] = $tempFile;
 
-            $offset = $i * $chunkSize;
+            $start = $offsets[$i];
+            $end = isset($offsets[$i + 1]) ? $offsets[$i + 1] : $fileSize;
 
             $pid = pcntl_fork();
 
@@ -30,8 +40,8 @@ final class Parser
 
             if ($pid === 0) {
                 // Child process
-                $visits = $this->processChunk($inputPath, $offset, $chunkSize, $i === 0);
-                file_put_contents($tempFile, serialize($visits));
+                $visits = $this->processChunk($inputPath, $start, $end);
+                file_put_contents($tempFile, json_encode($visits));
                 exit(0);
             }
 
@@ -46,7 +56,8 @@ final class Parser
 
         foreach ($tempFiles as $tempFile) {
             $handle = fopen($tempFile, 'r');
-            $visits = unserialize(stream_get_contents($handle));
+            $visits = json_decode(file_get_contents($tempFile), true);
+
             fclose($handle);
 
             unlink($tempFile);
@@ -63,10 +74,12 @@ final class Parser
         }
         unset($days);
 
-        file_put_contents($outputPath, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $json = json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        $json = str_replace("\n", "\r\n", $json);
+        file_put_contents($outputPath, $json);
     }
 
-    private function processChunk(string $inputPath, int $offset, int $chunkSize, bool $isFirst): array
+    private function processChunk(string $inputPath, int $start, int $end): array
     {
         $handle = fopen($inputPath, 'r');
 
@@ -74,31 +87,26 @@ final class Parser
             throw new Exception("Could not open input file: $inputPath");
         }
 
-        fseek($handle, $offset);
-
-        if (!$isFirst) {
-            fgets($handle);
-        }
+        fseek($handle, $start);
 
         $visits = [];
-        $bytesRead = 0;
 
-        while ($bytesRead <= $chunkSize && ($line = fgets($handle)) !== false) {
-            $bytesRead += strlen($line);
+        while (ftell($handle) < $end && ($line = fgets($handle)) !== false) {
+            $trimmed = rtrim($line, "\r\n");
 
-            if ($line === '') {
+            if ($trimmed === '') {
                 continue;
             }
 
-            $commaPos = strrpos($line, ',');
+            $commaPos = strpos($trimmed, ',');
 
             if ($commaPos === false) {
                 continue;
             }
 
-            $url  = substr($line, 0, $commaPos);
-            $date = substr($line, $commaPos + 1, 10);
-            $path = parse_url($url, PHP_URL_PATH);
+            $url  = substr($trimmed, 0, $commaPos);
+            $date = substr($trimmed, $commaPos + 1, 10);
+            $path = substr($url, strpos($url, '/', 8));
 
             if ($path === false || $path === null) {
                 continue;

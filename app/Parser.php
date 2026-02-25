@@ -14,10 +14,11 @@ final class Parser
         $chunkSize = (int) ceil($fileSize / self::WORKERS);
 
         $offsets = [0];
-        $handle = fopen($inputPath, 'r');
+        $handle = fopen($inputPath, 'rb');
+
         for ($i = 1; $i < self::WORKERS; $i++) {
             fseek($handle, $i * $chunkSize);
-            fgets($handle); // advance past the partial line
+            fgets($handle);
             $offsets[$i] = ftell($handle);
         }
         fclose($handle);
@@ -81,7 +82,8 @@ final class Parser
 
     private function processChunk(string $inputPath, int $start, int $end): array
     {
-        $handle = fopen($inputPath, 'r');
+        $handle = fopen($inputPath, 'rb');
+
 
         if ($handle === false) {
             throw new Exception("Could not open input file: $inputPath");
@@ -91,26 +93,29 @@ final class Parser
 
         $visits = [];
 
-        while (ftell($handle) < $end && ($line = fgets($handle)) !== false) {
-            $trimmed = rtrim($line, "\r\n");
+        $bytesRead = 0;
+        $limit = $end - $start;
 
-            if ($trimmed === '') {
-                continue;
-            }
+        while ($bytesRead < $limit && ($line = fgets($handle)) !== false) {
+            
+            // https://stitcher.io/blog/php-81-new-in-initializers,2023-11-03T13:21:54+00:00
+            $bytesRead += strlen($line);
 
-            $commaPos = strpos($trimmed, ',');
+            $commaPos = strpos($line, ',');
 
             if ($commaPos === false) {
                 continue;
             }
 
-            $url  = substr($trimmed, 0, $commaPos);
-            $date = substr($trimmed, $commaPos + 1, 10);
-            $path = substr($url, strpos($url, '/', 8));
+            $date = substr($line, $commaPos + 1, 10);
+            $path = substr($line, 19, $commaPos - 19);
 
             if ($path === false || $path === null) {
                 continue;
             }
+
+            //echo $date . PHP_EOL; die();
+
 
             $visits[$path][$date] = ($visits[$path][$date] ?? 0) + 1;
         }

@@ -107,7 +107,6 @@ final class Parser
         unset($days);
 
         $json = json_encode($merged, JSON_PRETTY_PRINT);
-        $json = str_replace("\n", "\r\n", $json);
         file_put_contents($outputPath, $json);
     }
 

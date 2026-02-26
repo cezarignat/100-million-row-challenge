@@ -7,10 +7,11 @@ use Exception;
 
 final class Parser
 {
-    private const WORKERS = 4;
+    private const WORKERS = 8;
 
     public function parse(string $inputPath, string $outputPath): void
     {
+        gc_disable();
         $fileSize = filesize($inputPath);
         $chunkSize = (int) ceil($fileSize / self::WORKERS);
 
@@ -29,7 +30,8 @@ final class Parser
 
         // Create temp files for each worker
         for ($i = 0; $i < self::WORKERS; $i++) {
-            $tempFiles[$i] = sys_get_temp_dir() . '/parser_worker_' . $i . '_' . uniqid() . '.dat';
+            $tmpDir = is_dir('/dev/shm') ? '/dev/shm' : sys_get_temp_dir();
+            $tempFiles[$i] = $tmpDir . '/parser_worker_' . $i . '_' . uniqid() . '.dat';
         }
 
         // Fork workers
@@ -111,21 +113,27 @@ final class Parser
         $remaining = $end - $start;
 
         while ($remaining > 0) {
-            $chunk = fread($handle, min(1048576, $remaining));
+            $chunk = fread($handle, min(4194304, $remaining));
             $remaining -= strlen($chunk);
             
             $lines = explode("\n", $chunk);
             $lineCount = count($lines) - 1;
             
             for ($i = 0; $i < $lineCount; $i++) {
-                $commaPos = strpos($lines[$i], ',');
-                if ($commaPos === false) continue;
+                $line = $lines[$i];
+                $len = strlen($line);
                 
-                $path = substr($lines[$i], 19, $commaPos - 19);
-                $date = substr($lines[$i], $commaPos + 1, 10);
+                if ($len < 52) continue; // Min line length
+                
+                // Extract path: starts at position 19, ends 26 chars before newline
+                $path = substr($line, 19, $len - 45);
+                
+                // Extract date: 10 chars starting 23 chars from end
+                $date = substr($line, $len - 25, 10);
                 
                 $visits[$path][$date] = ($visits[$path][$date] ?? 0) + 1;
             }
+
             
             if ($remaining > 0 && isset($lines[$lineCount]) && $lines[$lineCount] !== '') {
                 fseek($handle, -strlen($lines[$lineCount]), SEEK_CUR);

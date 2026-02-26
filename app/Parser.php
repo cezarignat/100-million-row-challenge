@@ -4,6 +4,7 @@ namespace App;
 
 use Exception;
 
+
 final class Parser
 {
     private const WORKERS = 4;
@@ -45,7 +46,9 @@ final class Parser
             if ($pid === 0) {
                 // Child process
                 $visits = $this->processChunk($inputPath, $start, $end);
-                $data = serialize($visits);
+                $data = igbinary_serialize($visits);
+
+
                 
                 if (file_put_contents($tempFiles[$i], $data) === false) {
                     fwrite(STDERR, "Worker $i: Failed to write temp file\n");
@@ -75,7 +78,8 @@ final class Parser
             }
 
             $data = file_get_contents($tempFile);
-            $visits = unserialize($data, ['allowed_classes' => false]);
+            $visits = igbinary_unserialize($data);
+
 
             // Merge
             foreach ($visits as $path => $days) {
@@ -100,31 +104,37 @@ final class Parser
     private function processChunk(string $inputPath, int $start, int $end): array
     {
         $handle = fopen($inputPath, 'rb');
-
-        if ($handle === false) {
-            throw new Exception("Could not open input file: $inputPath");
-        }
-
+        stream_set_read_buffer($handle, 0);
+        
         fseek($handle, $start);
-
         $visits = [];
-        $pos = $start;
+        $remaining = $end - $start;
 
-        while (($line = fgets($handle)) !== false) {
-            $pos += strlen($line);
-            if ($pos > $end) break;
-
-            $commaPos = strpos($line, ',');
-            if ($commaPos === false) continue;
-
-            $path = substr($line, 19, $commaPos - 19);
-            $date = substr($line, $commaPos + 1, 10);
-
-            $visits[$path][$date] = ($visits[$path][$date] ?? 0) + 1;
+        while ($remaining > 0) {
+            $chunk = fread($handle, min(1048576, $remaining));
+            $remaining -= strlen($chunk);
+            
+            $lines = explode("\n", $chunk);
+            $lineCount = count($lines) - 1;
+            
+            for ($i = 0; $i < $lineCount; $i++) {
+                $commaPos = strpos($lines[$i], ',');
+                if ($commaPos === false) continue;
+                
+                $path = substr($lines[$i], 19, $commaPos - 19);
+                $date = substr($lines[$i], $commaPos + 1, 10);
+                
+                $visits[$path][$date] = ($visits[$path][$date] ?? 0) + 1;
+            }
+            
+            if ($remaining > 0 && isset($lines[$lineCount]) && $lines[$lineCount] !== '') {
+                fseek($handle, -strlen($lines[$lineCount]), SEEK_CUR);
+                $remaining += strlen($lines[$lineCount]);
+            }
         }
 
         fclose($handle);
-
         return $visits;
     }
+
 }
